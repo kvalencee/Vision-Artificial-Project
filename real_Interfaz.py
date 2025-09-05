@@ -150,9 +150,9 @@ class PhotoEditor:
         zoom_frame.pack(side=tk.LEFT, padx=5)
 
         ttk.Label(zoom_frame, text="Zoom:").pack(side=tk.LEFT)
-        btn_zoom_out = ttk.Button(zoom_frame, text="+", command=self.zoom_out, width=3)
+        btn_zoom_out = ttk.Button(zoom_frame, text="-", command=self.zoom_out, width=3)
         btn_zoom_out.pack(side=tk.LEFT, padx=2)
-        btn_zoom_in = ttk.Button(zoom_frame, text="-", command=self.zoom_in, width=3)
+        btn_zoom_in = ttk.Button(zoom_frame, text="+", command=self.zoom_in, width=3)
         btn_zoom_in.pack(side=tk.LEFT, padx=2)
         btn_zoom_fit = ttk.Button(zoom_frame, text="🔍 Ajustar", command=self.zoom_fit, width=8)
         btn_zoom_fit.pack(side=tk.LEFT, padx=2)
