@@ -11,6 +11,11 @@ from tkinter import messagebox
 import numpy as np
 from PIL import Image
 import os
+import sys
+
+# Asegurar que el directorio actual está en el path
+if os.path.dirname(__file__):
+    sys.path.insert(0, os.path.dirname(__file__))
 
 # Importar módulos
 from core import ImageManager, HistoryManager

@@ -3,10 +3,11 @@ Ventana principal de PhotoEscom
 """
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, messagebox
+import tkinter.filedialog as filedialog
 from PIL import Image, ImageTk
 import sys
-sys.path.append('..')
+
 from utils.constants import UI_COLORS, SUPPORTED_FORMATS, SAVE_FORMATS
 from .toolbar import Toolbar
 from .panels import (

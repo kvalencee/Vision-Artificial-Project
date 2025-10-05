@@ -6,7 +6,6 @@ import tkinter as tk
 from tkinter import ttk
 import sys
 
-sys.path.append('..')
 from utils.constants import (
     OPERATOR_INFO,
     EDGE_OPERATORS,

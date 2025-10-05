@@ -5,7 +5,6 @@ Gestor de historial para deshacer/rehacer
 from PIL import Image
 import sys
 
-sys.path.append('..')
 from utils.constants import MAX_HISTORY_SIZE
 
 

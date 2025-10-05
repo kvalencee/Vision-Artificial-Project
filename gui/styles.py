@@ -5,7 +5,6 @@ Estilos y configuración visual de la interfaz
 from tkinter import ttk
 import sys
 
-sys.path.append('..')
 from utils.constants import UI_COLORS
 
 
