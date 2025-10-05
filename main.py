@@ -453,8 +453,6 @@ Historial: {hist_info['current']}/{hist_info['total']}"""
 def main():
     """Función principal"""
     root = tk.Tk()
-
-    # Crear controlador
     controller = PhotoEditorController()
 
     # Crear GUI
