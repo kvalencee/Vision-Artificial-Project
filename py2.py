@@ -37,16 +37,16 @@ class PhotoEditor:
 
         # Variables para detección de bordes (basadas en PDF)
         self.edge_operator_var = tk.StringVar(value="sobel")
-        self.threshold_var = tk.DoubleVar(value=30.0)  # T del PDF (ecuación 6.5)
+        self.threshold_var = tk.DoubleVar(value=30.0)
         self.sigma_var = tk.DoubleVar(value=1.0)
-        self.canny_low_var = tk.DoubleVar(value=50.0)  # t1 del PDF
-        self.canny_high_var = tk.DoubleVar(value=150.0)  # t2 del PDF
+        self.canny_low_var = tk.DoubleVar(value=50.0)
+        self.canny_high_var = tk.DoubleVar(value=150.0)
 
         # Variables adicionales del PDF
-        self.roberts_form_var = tk.StringVar(value="sqrt")  # Forma 1 o 2 del PDF (pág 9)
-        self.show_magnitude_var = tk.BooleanVar(value=False)  # Mostrar |G| (pág 5)
-        self.show_angle_var = tk.BooleanVar(value=False)  # Mostrar θ (pág 5)
-        self.extended_size_var = tk.IntVar(value=3)  # 3x3, 5x5, 7x7, 9x9, 11x11 (pág 15)
+        self.roberts_form_var = tk.StringVar(value="sqrt")
+        self.show_magnitude_var = tk.BooleanVar(value=False)
+        self.show_angle_var = tk.BooleanVar(value=False)
+        self.extended_size_var = tk.IntVar(value=3)
 
         # Configurar estilo
         self.setup_styles()
@@ -130,7 +130,7 @@ class PhotoEditor:
     # ============= MÉTODOS DE DETECCIÓN DE BORDES SEGÚN PDF =============
 
     def normalize_image(self, image):
-        """Normalizar imagen a rango [0, 255]"""
+        """Normalizar imagen a rango [0, 255] usando min-max normalization"""
         if image.dtype != np.float64:
             image = image.astype(np.float64)
 
@@ -187,7 +187,6 @@ class PhotoEditor:
         grad_x = ndimage.convolve(image_array.astype(np.float64), gx)
         grad_y = ndimage.convolve(image_array.astype(np.float64), gy)
 
-        # Ecuación (6.2) y (6.3) del PDF
         magnitude = np.sqrt(grad_x ** 2 + grad_y ** 2)
         angle = np.arctan2(grad_y, grad_x)
 
@@ -217,24 +216,24 @@ class PhotoEditor:
 
     def roberts_operator(self, image_array):
         """
-        Operador de Roberts
+        Operador de Roberts - CORREGIDO
         Ecuación (6.7): D1 = f(x,y) - f(x-1,y-1)
                         D2 = f(x,y-1) - f(x-1,y)
-        Dos formas (6.8):
-        Forma 1: R = sqrt(D1² + D2²)
-        Forma 2: R = |D1| + |D2|
+        Máscaras 2x2 del PDF (Figura 6.9)
         """
-        # Máscaras 2x2 del PDF (Figura 6.9)
-        gx = np.array([[1, 0],
-                       [0, -1]], dtype=np.float64)
+        # Usar convolución con padding para máscaras 2x2
+        h, w = image_array.shape
+        grad_x = np.zeros_like(image_array, dtype=np.float64)
+        grad_y = np.zeros_like(image_array, dtype=np.float64)
 
-        gy = np.array([[0, 1],
-                       [-1, 0]], dtype=np.float64)
+        # Aplicar máscaras de Roberts manualmente para evitar problemas de padding
+        # D1 = f(x,y) - f(x-1,y-1)
+        grad_x[1:, 1:] = image_array[1:, 1:] - image_array[:-1, :-1]
 
-        grad_x = ndimage.convolve(image_array.astype(np.float64), gx)
-        grad_y = ndimage.convolve(image_array.astype(np.float64), gy)
+        # D2 = f(x,y-1) - f(x-1,y)
+        grad_y[1:, :-1] = image_array[1:, :-1] - image_array[:-1, 1:]
 
-        # Seleccionar forma según variable
+        # Seleccionar forma según variable (Ecuación 6.8)
         if self.roberts_form_var.get() == "sqrt":
             magnitude = np.sqrt(grad_x ** 2 + grad_y ** 2)
         else:  # "abs"
@@ -248,71 +247,123 @@ class PhotoEditor:
 
     def kirsch_operator(self, image_array):
         """
-        Máscaras de Kirsch
-        8 máscaras direccionales (0°, 45°, 90°, 135°, 180°, 225°, 270°, 315°)
-        Figura 6.11: Máscaras exactas del PDF
+        Máscaras de Kirsch - CORREGIDO según Figura 6.11
+        La máscara base es k0 y se rota en incrementos de 45°
         """
-        # Las 8 máscaras del PDF
-        masks = [
-            np.array([[-3, -3, 5], [-3, 0, 5], [-3, -3, 5]]),  # 0°
-            np.array([[-3, 5, 5], [-3, 0, 5], [-3, -3, -3]]),  # 45°
-            np.array([[5, 5, 5], [-3, 0, -3], [-3, -3, -3]]),  # 90°
-            np.array([[5, 5, -3], [5, 0, -3], [-3, -3, -3]]),  # 135°
-            np.array([[5, -3, -3], [5, 0, -3], [5, -3, -3]]),  # 180°
-            np.array([[-3, -3, -3], [5, 0, -3], [5, 5, -3]]),  # 225°
-            np.array([[-3, -3, -3], [-3, 0, -3], [5, 5, 5]]),  # 270°
-            np.array([[-3, -3, -3], [-3, 0, 5], [-3, 5, 5]])  # 315°
-        ]
+        # Máscara base k0 según Figura 6.11 del libro
+        # Las 8 máscaras se generan rotando los valores externos
+        # manteniendo el centro en 0
+
+        # Patrón: 5 en una dirección, -3 en el resto
+        masks = []
+
+        # k0 (Este): 5 5 5 en el lado derecho
+        masks.append(np.array([[-3, -3, 5],
+                               [-3, 0, 5],
+                               [-3, -3, 5]], dtype=np.float64))
+
+        # k1 (Noreste): 5 5 5 en diagonal superior derecha
+        masks.append(np.array([[-3, 5, 5],
+                               [-3, 0, 5],
+                               [-3, -3, -3]], dtype=np.float64))
+
+        # k2 (Norte): 5 5 5 arriba
+        masks.append(np.array([[5, 5, 5],
+                               [-3, 0, -3],
+                               [-3, -3, -3]], dtype=np.float64))
+
+        # k3 (Noroeste): 5 5 5 en diagonal superior izquierda
+        masks.append(np.array([[5, 5, -3],
+                               [5, 0, -3],
+                               [-3, -3, -3]], dtype=np.float64))
+
+        # k4 (Oeste): 5 5 5 en el lado izquierdo
+        masks.append(np.array([[5, -3, -3],
+                               [5, 0, -3],
+                               [5, -3, -3]], dtype=np.float64))
+
+        # k5 (Suroeste): 5 5 5 en diagonal inferior izquierda
+        masks.append(np.array([[-3, -3, -3],
+                               [5, 0, -3],
+                               [5, 5, -3]], dtype=np.float64))
+
+        # k6 (Sur): 5 5 5 abajo
+        masks.append(np.array([[-3, -3, -3],
+                               [-3, 0, -3],
+                               [5, 5, 5]], dtype=np.float64))
+
+        # k7 (Sureste): 5 5 5 en diagonal inferior derecha
+        masks.append(np.array([[-3, -3, -3],
+                               [-3, 0, 5],
+                               [-3, 5, 5]], dtype=np.float64))
 
         responses = []
         for mask in masks:
-            response = ndimage.convolve(image_array.astype(np.float64),
-                                        mask.astype(np.float64))
+            response = ndimage.convolve(image_array.astype(np.float64), mask)
             responses.append(response)
 
-        # Máximo en cada posición (PDF pág 10)
+        # Máximo en cada posición
         magnitude = np.maximum.reduce(responses)
 
         # Ángulo correspondiente al máximo
         responses_stack = np.stack(responses, axis=-1)
         angle_indices = np.argmax(responses_stack, axis=-1)
-        angle = angle_indices * 45.0  # Convertir índice a grados
+        angle = angle_indices * 45.0
 
         return magnitude, np.deg2rad(angle), None, None
 
     def robinson_operator(self, image_array):
         """
-        Máscaras de Robinson
-        Similar a Kirsch pero con máscara inicial diferente
-        Figura 6.13: Máscara inicial r0
+        Máscaras de Robinson - CORREGIDO según Figura 6.13
+        Máscara base r0 rotada sistemáticamente
         """
-        # Máscara base del PDF (Figura 6.13)
-        base_mask = np.array([[-1, 0, 1],
-                              [-2, 0, 2],
-                              [-1, 0, 1]], dtype=np.float64)
+        # Máscara base r0 según Figura 6.13
+        base = np.array([[-1, 0, 1],
+                         [-2, 0, 2],
+                         [-1, 0, 1]], dtype=np.float64)
 
-        # Generar las 8 máscaras rotando 45° cada una
         masks = []
-        for angle in range(0, 360, 45):
-            # Rotar la máscara conceptualmente
-            if angle == 0:
-                mask = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
-            elif angle == 45:
-                mask = np.array([[-2, -1, 0], [-1, 0, 1], [0, 1, 2]])
-            elif angle == 90:
-                mask = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]])
-            elif angle == 135:
-                mask = np.array([[0, -1, -2], [1, 0, -1], [2, 1, 0]])
-            elif angle == 180:
-                mask = np.array([[1, 0, -1], [2, 0, -2], [1, 0, -1]])
-            elif angle == 225:
-                mask = np.array([[2, 1, 0], [1, 0, -1], [0, -1, -2]])
-            elif angle == 270:
-                mask = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]])
-            else:  # 315
-                mask = np.array([[0, 1, 2], [-1, 0, 1], [-2, -1, 0]])
 
-            masks.append(mask.astype(np.float64))
+        # Generar las 8 máscaras rotando la base
+        # r0 (0°)
+        masks.append(np.array([[-1, 0, 1],
+                               [-2, 0, 2],
+                               [-1, 0, 1]], dtype=np.float64))
+
+        # r1 (45°)
+        masks.append(np.array([[0, 1, 2],
+                               [-1, 0, 1],
+                               [-2, -1, 0]], dtype=np.float64))
+
+        # r2 (90°)
+        masks.append(np.array([[1, 2, 1],
+                               [0, 0, 0],
+                               [-1, -2, -1]], dtype=np.float64))
+
+        # r3 (135°)
+        masks.append(np.array([[2, 1, 0],
+                               [1, 0, -1],
+                               [0, -1, -2]], dtype=np.float64))
+
+        # r4 (180°)
+        masks.append(np.array([[1, 0, -1],
+                               [2, 0, -2],
+                               [1, 0, -1]], dtype=np.float64))
+
+        # r5 (225°)
+        masks.append(np.array([[0, -1, -2],
+                               [1, 0, -1],
+                               [2, 1, 0]], dtype=np.float64))
+
+        # r6 (270°)
+        masks.append(np.array([[-1, -2, -1],
+                               [0, 0, 0],
+                               [1, 2, 1]], dtype=np.float64))
+
+        # r7 (315°)
+        masks.append(np.array([[-2, -1, 0],
+                               [-1, 0, 1],
+                               [0, 1, 2]], dtype=np.float64))
 
         responses = []
         for mask in masks:
@@ -330,38 +381,66 @@ class PhotoEditor:
 
     def frei_chen_operator(self, image_array):
         """
-        Máscaras de Frei-Chen
+        Máscaras de Frei-Chen - CORREGIDO según Figura 6.15
         9 máscaras formando base vectorial completa
-        Ecuación (6.10): R = suma(wi*zi) = ||w||||z||cos(θ) = w^t*z = (W,Z)
-        Ecuación (6.13): cos(θ) = sqrt(M/S)
         """
         sqrt2 = np.sqrt(2)
 
-        # Las 9 máscaras del PDF (Figura 6.15)
+        # Las 9 máscaras exactas del PDF (Figura 6.15)
         masks = [
-            # Bordes (f1-f4)
-            np.array([[1, sqrt2, 1], [0, 0, 0], [-1, -sqrt2, -1]]) / (2 * sqrt2),
-            np.array([[1, 0, -1], [sqrt2, 0, -sqrt2], [1, 0, -1]]) / (2 * sqrt2),
-            np.array([[0, -1, sqrt2], [1, 0, -1], [-sqrt2, 1, 0]]) / (2 * sqrt2),
-            np.array([[sqrt2, -1, 0], [-1, 0, 1], [0, 1, -sqrt2]]) / (2 * sqrt2),
-            # Líneas (f5-f8)
-            np.array([[0, 1, 0], [-1, 0, -1], [0, 1, 0]]) / 2,
-            np.array([[-1, 0, 1], [0, 0, 0], [1, 0, -1]]) / 2,
-            np.array([[1, -2, 1], [-2, 4, -2], [1, -2, 1]]) / 6,
-            np.array([[-2, 1, -2], [1, 4, 1], [-2, 1, -2]]) / 6,
-            # Promedio (f9)
-            np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]]) / 3
+            # f1 - Borde promedio horizontal
+            (1 / (2 * sqrt2)) * np.array([[1, sqrt2, 1],
+                                          [0, 0, 0],
+                                          [-1, -sqrt2, -1]], dtype=np.float64),
+
+            # f2 - Borde promedio vertical
+            (1 / (2 * sqrt2)) * np.array([[1, 0, -1],
+                                          [sqrt2, 0, -sqrt2],
+                                          [1, 0, -1]], dtype=np.float64),
+
+            # f3 - Borde diagonal (/)
+            (1 / (2 * sqrt2)) * np.array([[0, -1, sqrt2],
+                                          [1, 0, -1],
+                                          [-sqrt2, 1, 0]], dtype=np.float64),
+
+            # f4 - Borde diagonal (\)
+            (1 / (2 * sqrt2)) * np.array([[sqrt2, -1, 0],
+                                          [-1, 0, 1],
+                                          [0, 1, -sqrt2]], dtype=np.float64),
+
+            # f5 - Línea horizontal
+            0.5 * np.array([[0, 1, 0],
+                            [-1, 0, -1],
+                            [0, 1, 0]], dtype=np.float64),
+
+            # f6 - Línea diagonal
+            0.5 * np.array([[-1, 0, 1],
+                            [0, 0, 0],
+                            [1, 0, -1]], dtype=np.float64),
+
+            # f7 - Gaussiano (pasa bajas)
+            (1 / 6) * np.array([[1, -2, 1],
+                                [-2, 4, -2],
+                                [1, -2, 1]], dtype=np.float64),
+
+            # f8 - Laplaciano
+            (1 / 6) * np.array([[-2, 1, -2],
+                                [1, 4, 1],
+                                [-2, 1, -2]], dtype=np.float64),
+
+            # f9 - Promedio (constante)
+            (1 / 3) * np.array([[1, 1, 1],
+                                [1, 1, 1],
+                                [1, 1, 1]], dtype=np.float64)
         ]
 
-        # Proyecciones (I_S, f_i) según ecuación (6.10)
+        # Proyecciones según ecuación (6.10)
         projections = []
         for mask in masks:
-            projection = ndimage.convolve(image_array.astype(np.float64),
-                                          mask.astype(np.float64))
+            projection = ndimage.convolve(image_array.astype(np.float64), mask)
             projections.append(projection)
 
-        # Subespacio de bordes: solo primeras 4 máscaras (f1-f4)
-        # Ecuación (6.13): M = suma((I_S, f_i)²) y S = suma((I_S, f_i)²)
+        # Subespacio de bordes: f1-f4 (ecuación 6.13)
         edge_responses = [p ** 2 for p in projections[:4]]
         all_responses = [p ** 2 for p in projections]
 
@@ -371,8 +450,8 @@ class PhotoEditor:
         # Evitar división por cero
         S_safe = np.where(S > 0, S, 1)
 
-        # cos(θ) = sqrt(M/S) del PDF
-        cos_theta = np.sqrt(M / S_safe)
+        # cos(θ) = sqrt(M/S)
+        cos_theta = np.sqrt(np.clip(M / S_safe, 0, 1))
 
         # Magnitud de bordes
         magnitude = np.sqrt(M)
@@ -383,32 +462,59 @@ class PhotoEditor:
 
     def extended_sobel_operator(self, image_array, size=7):
         """
-        Operador de Sobel Extendido
-        Figura 6.18: Máscaras 7x7, 9x9, 11x11
+        Operador de Sobel Extendido - CORREGIDO con 9x9 y 11x11
+        Según Figura 6.18
         """
         if size == 3:
             return self.sobel_operator(image_array)
 
-        # Máscara 7x7 extendida del PDF (Figura 6.18)
-        if size == 7:
-            gx = np.array([
-                [-1, -1, -1, -2, -1, -1, -1],
-                [-1, -1, -1, -2, -1, -1, -1],
-                [-1, -1, -1, -2, -1, -1, -1],
-                [0, 0, 0, 0, 0, 0, 0],
-                [1, 1, 1, 2, 1, 1, 1],
-                [1, 1, 1, 2, 1, 1, 1],
-                [1, 1, 1, 2, 1, 1, 1]
-            ], dtype=np.float64)
+        # Máscaras extendidas según el patrón del libro
+        if size == 5:
+            # Máscara 5x5
+            gx = np.array([[-1, -2, 0, 2, 1],
+                           [-2, -3, 0, 3, 2],
+                           [-3, -5, 0, 5, 3],
+                           [-2, -3, 0, 3, 2],
+                           [-1, -2, 0, 2, 1]], dtype=np.float64)
             gy = gx.T
-        elif size == 5:
-            gx = np.array([
-                [-1, -1, -2, -1, -1],
-                [-1, -1, -2, -1, -1],
-                [0, 0, 0, 0, 0],
-                [1, 1, 2, 1, 1],
-                [1, 1, 2, 1, 1]
-            ], dtype=np.float64)
+
+        elif size == 7:
+            # Máscara 7x7 según Figura 6.18
+            gx = np.array([[-1, -1, -1, 0, 1, 1, 1],
+                           [-1, -2, -2, 0, 2, 2, 1],
+                           [-1, -2, -3, 0, 3, 2, 1],
+                           [-1, -2, -3, 0, 3, 2, 1],
+                           [-1, -2, -3, 0, 3, 2, 1],
+                           [-1, -2, -2, 0, 2, 2, 1],
+                           [-1, -1, -1, 0, 1, 1, 1]], dtype=np.float64)
+            gy = gx.T
+
+        elif size == 9:
+            # Máscara 9x9 (extrapolada del patrón)
+            gx = np.array([[-1, -1, -1, -1, 0, 1, 1, 1, 1],
+                           [-1, -2, -2, -2, 0, 2, 2, 2, 1],
+                           [-1, -2, -3, -3, 0, 3, 3, 2, 1],
+                           [-1, -2, -3, -4, 0, 4, 3, 2, 1],
+                           [-1, -2, -3, -4, 0, 4, 3, 2, 1],
+                           [-1, -2, -3, -4, 0, 4, 3, 2, 1],
+                           [-1, -2, -3, -3, 0, 3, 3, 2, 1],
+                           [-1, -2, -2, -2, 0, 2, 2, 2, 1],
+                           [-1, -1, -1, -1, 0, 1, 1, 1, 1]], dtype=np.float64)
+            gy = gx.T
+
+        elif size == 11:
+            # Máscara 11x11 (extrapolada del patrón)
+            gx = np.array([[-1, -1, -1, -1, -1, 0, 1, 1, 1, 1, 1],
+                           [-1, -2, -2, -2, -2, 0, 2, 2, 2, 2, 1],
+                           [-1, -2, -3, -3, -3, 0, 3, 3, 3, 2, 1],
+                           [-1, -2, -3, -4, -4, 0, 4, 4, 3, 2, 1],
+                           [-1, -2, -3, -4, -5, 0, 5, 4, 3, 2, 1],
+                           [-1, -2, -3, -4, -5, 0, 5, 4, 3, 2, 1],
+                           [-1, -2, -3, -4, -5, 0, 5, 4, 3, 2, 1],
+                           [-1, -2, -3, -4, -4, 0, 4, 4, 3, 2, 1],
+                           [-1, -2, -3, -3, -3, 0, 3, 3, 3, 2, 1],
+                           [-1, -2, -2, -2, -2, 0, 2, 2, 2, 2, 1],
+                           [-1, -1, -1, -1, -1, 0, 1, 1, 1, 1, 1]], dtype=np.float64)
             gy = gx.T
         else:
             return self.sobel_operator(image_array)
@@ -424,15 +530,8 @@ class PhotoEditor:
     # ===== ALGORITMO DE CANNY (Sección 6.3.9) =====
 
     def canny_operator(self, image_array):
-        """
-        Algoritmo de Canny completo
-        3 módulos:
-        1. Obtención del gradiente (magnitud y ángulo)
-        2. Adelgazamiento (supresión no máxima)
-        3. Histéresis de umbral
-        """
+        """Algoritmo de Canny completo"""
         try:
-            # Usar OpenCV si está disponible (más eficiente)
             img_uint8 = image_array.astype(np.uint8)
 
             sigma = self.sigma_var.get()
@@ -449,25 +548,17 @@ class PhotoEditor:
             return edges, None, None, None
 
         except:
-            # Implementación manual según PDF
             return self.canny_manual(image_array)
 
     def canny_manual(self, image_array):
-        """
-        Implementación manual de Canny
-        """
-        # 1) Obtención del gradiente (PDF pág 16)
-        # a) Suavizar con núcleo Gaussiano
+        """Implementación manual de Canny"""
         sigma = self.sigma_var.get()
         smoothed = gaussian_filter(image_array.astype(np.float64), sigma=sigma)
 
-        # b) Calcular magnitud y módulo del gradiente (ecuación 6.2 y 6.3)
         magnitude, angle, grad_x, grad_y = self.sobel_operator(smoothed)
 
-        # 2) Supresión no máxima (PDF pág 16)
         suppressed = self.non_maximum_suppression(magnitude, angle)
 
-        # 3) Histéresis de umbral (PDF pág 16-18)
         low_threshold = self.canny_low_var.get()
         high_threshold = self.canny_high_var.get()
 
@@ -476,112 +567,79 @@ class PhotoEditor:
         return (edges * 255).astype(np.uint8), angle, grad_x, grad_y
 
     def non_maximum_suppression(self, magnitude, angle):
-        """
-        Adelgazamiento de bordes - Supresión no máxima
-        """
+        """Adelgazamiento de bordes - Supresión no máxima"""
         rows, cols = magnitude.shape
         suppressed = np.zeros_like(magnitude)
 
-        # Convertir ángulos a grados y normalizar
         angle_deg = (np.rad2deg(angle) + 180) % 180
 
-        # 4 direcciones: 0°, 45°, 90°, 135° (PDF pág 16)
         for i in range(1, rows - 1):
             for j in range(1, cols - 1):
                 current = magnitude[i, j]
                 ang = angle_deg[i, j]
 
-                # a) Encontrar dirección que mejor aproxima E_θ(i,j)
                 if (ang >= 0 and ang < 22.5) or (ang >= 157.5 and ang < 180):
                     neighbors = [magnitude[i, j - 1], magnitude[i, j + 1]]
                 elif ang >= 22.5 and ang < 67.5:
                     neighbors = [magnitude[i - 1, j + 1], magnitude[i + 1, j - 1]]
                 elif ang >= 67.5 and ang < 112.5:
                     neighbors = [magnitude[i - 1, j], magnitude[i + 1, j]]
-                else:  # 112.5 - 157.5
+                else:
                     neighbors = [magnitude[i - 1, j - 1], magnitude[i + 1, j + 1]]
 
-                # b) Si E_M(i,j) es más pequeño que al menos uno de sus vecinos
-                # I_N(i,j) = 0 (supresión)
                 if current >= max(neighbors):
                     suppressed[i, j] = current
 
         return suppressed
 
     def hysteresis_threshold(self, image, low_threshold, high_threshold):
-        """
-        Histéresis de umbral
-        Algoritmo con dos umbrales t1 y t2 (t1 < t2)
-        """
-        # a) Tomar I_N como entrada y dos umbrales t1 y t2
+        """Histéresis de umbral con dos umbrales t1 y t2"""
         strong_edges = image > high_threshold
         weak_edges = (image >= low_threshold) & (image <= high_threshold)
 
-        # b) Para todos los puntos de I_N explorados en orden fijo:
-        # b.1) Localizar siguiente punto de borde no explorado I_N(i,j)
-        # b.2) Seguir cadenas de máximos locales conectados
-
-        # Implementación simplificada usando conectividad
         strong_dilated = binary_dilation(strong_edges, structure=np.ones((3, 3)))
         connected_weak = weak_edges & strong_dilated
 
-        # c) Salida es conjunto de bordes conectados
         edges = strong_edges | connected_weak
 
         return edges.astype(np.float32)
 
-    # ===== OPERADOR LAPLACIANO (Segunda Derivada - PDF pág 2-3) =====
+    # ===== OPERADOR LAPLACIANO (Segunda Derivada) =====
 
     def laplacian_operator(self, image_array):
-        """
-        Laplaciano de la Gaussiana (LoG)
-        Segunda derivada - detecta zero-crossings (PDF pág 2-3)
-        """
+        """Laplaciano de la Gaussiana (LoG) - Segunda derivada"""
         sigma = self.sigma_var.get()
 
-        # Suavizado gaussiano
         smoothed = gaussian_filter(image_array.astype(np.float64), sigma=sigma)
 
-        # Laplaciano (segunda derivada)
         laplacian = ndimage.laplace(smoothed)
 
-        # Detectar zero-crossings
         zero_crossings = self.detect_zero_crossings(laplacian)
 
         return zero_crossings, None, None, None
 
     def detect_zero_crossings(self, laplacian):
-        """
-        Detectar cambios de signo (zero-crossings) - PDF pág 2
-        La segunda derivada es cero en el inicio y final de una transición
-        """
+        """Detectar cambios de signo (zero-crossings)"""
         zc = np.zeros_like(laplacian, dtype=np.uint8)
 
-        # Verificar cambios de signo en 4 direcciones
         for dx, dy in [(0, 1), (1, 0), (1, 1), (1, -1)]:
             rolled = np.roll(np.roll(laplacian, dx, axis=0), dy, axis=1)
-            # Detectar donde el producto es negativo (cambio de signo)
             zc |= ((laplacian * rolled) < 0).astype(np.uint8)
 
         return zc * 255
 
-    # ===== APLICAR DETECCIÓN CON UMBRALIZACIÓN (Ecuación 6.5) =====
+    # ===== APLICAR DETECCIÓN CON UMBRALIZACIÓN =====
 
     def apply_edge_detection(self):
-        """
-        Aplicar detección de bordes con umbralización
-        Ecuación (6.5) del PDF: g(x,y) = {1 si G[f(x,y)] > T, 0 si G[f(x,y)] ≤ T}
-        """
+        """Aplicar detección de bordes con umbralización (Ecuación 6.5)"""
         if not self.current_image:
             messagebox.showwarning("Advertencia", "No hay imagen cargada")
             return
 
         try:
-            # Obtener imagen en escala de grises
             gray_image = self.history[self.history_index].convert('L')
             image_array = np.array(gray_image, dtype=np.float32)
 
-            # Validar tamaño
             if image_array.size > 10000000:
                 response = messagebox.askyesno(
                     "Imagen Grande",
@@ -593,7 +651,6 @@ class PhotoEditor:
             operator = self.edge_operator_var.get()
             size = self.extended_size_var.get()
 
-            # Aplicar operador seleccionado
             if operator == "gradient":
                 magnitude, angle, grad_x, grad_y = self.gradient_operator(image_array)
             elif operator == "sobel":
@@ -632,22 +689,16 @@ class PhotoEditor:
                 messagebox.showerror("Error", f"Operador no reconocido: {operator}")
                 return
 
-            # Verificar qué mostrar
             if self.show_magnitude_var.get():
-                # Mostrar magnitud del gradiente (PDF Fig 6.3a, 6.6a)
                 result = self.normalize_image(magnitude)
             elif self.show_angle_var.get() and angle is not None:
-                # Mostrar ángulo del gradiente (PDF Fig 6.3c, 6.6d)
-                # Convertir ángulo a imagen visualizable
                 angle_normalized = ((angle + np.pi) / (2 * np.pi) * 255).astype(np.uint8)
                 result = angle_normalized
             else:
-                # Aplicar umbralización (Ecuación 6.5 del PDF)
                 threshold = self.threshold_var.get()
                 magnitude_norm = self.normalize_image(magnitude)
                 result = np.where(magnitude_norm > threshold, 255, 0).astype(np.uint8)
 
-            # Convertir a imagen PIL
             edge_image = Image.fromarray(result).convert('RGB')
 
             self.current_image = edge_image
@@ -669,7 +720,6 @@ class PhotoEditor:
         try:
             original_img = self.history[self.history_index]
 
-            # Reducir tamaño para preview
             if max(original_img.size) > 800:
                 ratio = 800 / max(original_img.size)
                 new_size = (int(original_img.size[0] * ratio),
@@ -683,11 +733,9 @@ class PhotoEditor:
 
             operator = self.edge_operator_var.get()
 
-            # Preview rápido
             if operator == "canny":
                 result, _, _, _ = self.canny_operator(image_array)
             else:
-                # Aplicar operador básico
                 if operator == "sobel":
                     magnitude, _, _, _ = self.sobel_operator(image_array)
                 elif operator == "prewitt":
@@ -713,7 +761,6 @@ class PhotoEditor:
                     magnitude_norm = self.normalize_image(magnitude)
                     result = np.where(magnitude_norm > threshold, 255, 0).astype(np.uint8)
 
-            # Redimensionar al tamaño original si fue reducido
             if max(original_img.size) > 800:
                 result_pil = Image.fromarray(result)
                 result_pil = result_pil.resize(original_img.size, Image.Resampling.NEAREST)
@@ -743,7 +790,7 @@ class PhotoEditor:
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        # === OPERADORES DE PRIMERA DERIVADA (PDF Sección 6.3.1-6.3.4) ===
+        # Primera Derivada
         first_deriv_frame = ttk.LabelFrame(scrollable_frame, text="Primera Derivada", padding=10)
         first_deriv_frame.pack(fill=tk.X, pady=(0, 10))
 
@@ -758,7 +805,7 @@ class PhotoEditor:
             ttk.Radiobutton(first_deriv_frame, text=text, value=value,
                             variable=self.edge_operator_var).grid(row=i // 2, column=i % 2, sticky=tk.W, pady=2)
 
-        # === OPERADORES COMPASS ===
+        # Compass
         compass_frame = ttk.LabelFrame(scrollable_frame, text="Compass", padding=10)
         compass_frame.pack(fill=tk.X, pady=(0, 10))
 
@@ -767,52 +814,49 @@ class PhotoEditor:
         ttk.Radiobutton(compass_frame, text="Robinson (8 dir)", value="robinson",
                         variable=self.edge_operator_var).grid(row=0, column=1, sticky=tk.W, pady=2)
 
-        # === FREI-CHEN  ===
+        # Frei-Chen
         frei_frame = ttk.LabelFrame(scrollable_frame, text="Frei-Chen", padding=10)
         frei_frame.pack(fill=tk.X, pady=(0, 10))
 
         ttk.Radiobutton(frei_frame, text="Frei-Chen (9 máscaras)", value="frei_chen",
                         variable=self.edge_operator_var).pack(anchor=tk.W)
 
-        # === CANNY ===
+        # Canny
         canny_frame = ttk.LabelFrame(scrollable_frame, text="Canny", padding=10)
         canny_frame.pack(fill=tk.X, pady=(0, 10))
 
         ttk.Radiobutton(canny_frame, text="Canny (Óptimo)", value="canny",
                         variable=self.edge_operator_var).pack(anchor=tk.W)
 
-        # === SEGUNDA DERIVADA  ===
+        # Segunda Derivada
         second_deriv_frame = ttk.LabelFrame(scrollable_frame, text="Segunda Derivada", padding=10)
         second_deriv_frame.pack(fill=tk.X, pady=(0, 10))
 
         ttk.Radiobutton(second_deriv_frame, text="Laplaciano (LoG)", value="laplacian",
                         variable=self.edge_operator_var).pack(anchor=tk.W)
 
+        # Parámetros
         params_frame = ttk.LabelFrame(scrollable_frame, text="Parámetros", padding=10)
         params_frame.pack(fill=tk.X, pady=(0, 10))
 
-        # Umbral T (Ecuación 6.5)
         ttk.Label(params_frame, text="Umbral T (Ec. 6.5):").grid(row=0, column=0, sticky=tk.W, pady=5)
         threshold_scale = ttk.Scale(params_frame, from_=0, to=255, variable=self.threshold_var)
         threshold_scale.grid(row=0, column=1, sticky=tk.EW, pady=5, padx=(5, 0))
         threshold_value = ttk.Label(params_frame, text="30", width=5)
         threshold_value.grid(row=0, column=2, padx=(5, 0), pady=5)
 
-        # Sigma para Gaussiano
         ttk.Label(params_frame, text="Sigma (σ):").grid(row=1, column=0, sticky=tk.W, pady=5)
         sigma_scale = ttk.Scale(params_frame, from_=0.5, to=3.0, variable=self.sigma_var)
         sigma_scale.grid(row=1, column=1, sticky=tk.EW, pady=5, padx=(5, 0))
         sigma_value = ttk.Label(params_frame, text="1.0", width=5)
         sigma_value.grid(row=1, column=2, padx=(5, 0), pady=5)
 
-        # Canny t1 (bajo)
         ttk.Label(params_frame, text="Canny t1:").grid(row=2, column=0, sticky=tk.W, pady=5)
         canny_low_scale = ttk.Scale(params_frame, from_=0, to=255, variable=self.canny_low_var)
         canny_low_scale.grid(row=2, column=1, sticky=tk.EW, pady=5, padx=(5, 0))
         canny_low_value = ttk.Label(params_frame, text="50", width=5)
         canny_low_value.grid(row=2, column=2, padx=(5, 0), pady=5)
 
-        # Canny t2 (alto)
         ttk.Label(params_frame, text="Canny t2:").grid(row=3, column=0, sticky=tk.W, pady=5)
         canny_high_scale = ttk.Scale(params_frame, from_=0, to=255, variable=self.canny_high_var)
         canny_high_scale.grid(row=3, column=1, sticky=tk.EW, pady=5, padx=(5, 0))
@@ -821,7 +865,7 @@ class PhotoEditor:
 
         params_frame.columnconfigure(1, weight=1)
 
-        # === OPCIONES DE VISUALIZACIÓN  ===
+        # Visualización
         viz_frame = ttk.LabelFrame(scrollable_frame, text="Visualización", padding=10)
         viz_frame.pack(fill=tk.X, pady=(0, 10))
 
@@ -830,16 +874,16 @@ class PhotoEditor:
         ttk.Checkbutton(viz_frame, text="Mostrar θ (ángulo)",
                         variable=self.show_angle_var).pack(anchor=tk.W)
 
-        # === EXTENSIÓN DE OPERADORES  ===
-        ext_frame = ttk.LabelFrame(scrollable_frame, text="Extensión", padding=10)
+        # Extensión
+        ext_frame = ttk.LabelFrame(scrollable_frame, text="Extensión (Sobel)", padding=10)
         ext_frame.pack(fill=tk.X, pady=(0, 10))
 
         ttk.Label(ext_frame, text="Tamaño máscara:").pack(anchor=tk.W)
-        for size, text in [(3, "3x3"), (5, "5x5"), (7, "7x7")]:
+        for size, text in [(3, "3x3"), (5, "5x5"), (7, "7x7"), (9, "9x9"), (11, "11x11")]:
             ttk.Radiobutton(ext_frame, text=text, value=size,
                             variable=self.extended_size_var).pack(anchor=tk.W)
 
-        # === ROBERTS FORMA  ===
+        # Roberts
         roberts_frame = ttk.LabelFrame(scrollable_frame, text="Roberts", padding=10)
         roberts_frame.pack(fill=tk.X, pady=(0, 10))
 
@@ -848,7 +892,7 @@ class PhotoEditor:
         ttk.Radiobutton(roberts_frame, text="Forma 2: |D1|+|D2|", value="abs",
                         variable=self.roberts_form_var).pack(anchor=tk.W)
 
-        # === INFORMACIÓN DEL OPERADOR ===
+        # Información
         info_frame = ttk.LabelFrame(scrollable_frame, text="Información", padding=10)
         info_frame.pack(fill=tk.X, pady=(0, 10))
 
@@ -856,10 +900,9 @@ class PhotoEditor:
                                        wraplength=300, justify=tk.LEFT)
         self.operator_info.pack(anchor=tk.W)
 
-        # Actualizar información
         self.edge_operator_var.trace('w', self.update_operator_info)
 
-        # === BOTONES ===
+        # Botones
         action_frame = ttk.Frame(scrollable_frame)
         action_frame.pack(fill=tk.X, pady=10)
 
@@ -868,7 +911,6 @@ class PhotoEditor:
         ttk.Button(action_frame, text="Aplicar",
                    command=self.apply_edge_detection).pack(side=tk.LEFT)
 
-        # Actualizar valores
         def update_param_values(*args):
             threshold_value.config(text=f"{self.threshold_var.get():.0f}")
             sigma_value.config(text=f"{self.sigma_var.get():.1f}")
@@ -880,14 +922,13 @@ class PhotoEditor:
         self.canny_low_var.trace('w', update_param_values)
         self.canny_high_var.trace('w', update_param_values)
 
-        # Mouse wheel
         def _on_mousewheel(event):
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
         canvas.bind("<MouseWheel>", _on_mousewheel)
 
     def update_operator_info(self, *args):
-        """Actualizar información del operador según PDF"""
+        """Actualizar información del operador"""
         operator = self.edge_operator_var.get()
 
         info_texts = {
@@ -904,7 +945,7 @@ class PhotoEditor:
 
         self.operator_info.config(text=info_texts.get(operator, "Información no disponible"))
 
-    # ============= MÉTODOS ORIGINALES DEL EDITOR (sin cambios) =============
+    # ============= MÉTODOS ORIGINALES DEL EDITOR =============
 
     def create_top_toolbar(self):
         toolbar = ttk.Frame(self.root, height=50)
